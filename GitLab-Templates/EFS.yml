@@ -1,0 +1,57 @@
+---
+Description: GitLab EFS Stack
+
+Parameters:
+  EFSPerformance:
+    Type: String
+    Default: generalPurpose
+    AllowedValues:
+      - generalPurpose
+      - maxIO
+    Description: EFS Performance Type
+
+Resources:
+  ElasticFileSystem:
+    Type: AWS::EFS::FileSystem
+    Properties:
+      PerformanceMode:
+        Ref: EFSPerformance
+      FileSystemTags:
+        - Key: Name
+          Value: GitLab File System
+
+  EFSMountA:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId:
+        Ref: ElasticFileSystem
+      SecurityGroups:
+      - Fn::ImportValue: GitLab-Application-SecurityGroup
+      SubnetId:
+        Fn::ImportValue: GitLab-Private-A
+
+  EFSMountB:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId:
+        Ref: ElasticFileSystem
+      SecurityGroups:
+      - Fn::ImportValue: GitLab-Application-SecurityGroup
+      SubnetId:
+        Fn::ImportValue: GitLab-Private-B
+        
+  EFSMountC:
+    Type: AWS::EFS::MountTarget
+    Properties:
+      FileSystemId:
+        Ref: ElasticFileSystem
+      SecurityGroups:
+      - Fn::ImportValue: GitLab-Application-SecurityGroup
+      SubnetId:
+        Fn::ImportValue: GitLab-Private-C
+
+Outputs:
+  EFSEndpoint:
+    Description: EFS Endpoint
+    Value: !Sub ${ElasticFileSystem}.efs.${AWS::Region}.amazonaws.com
+    

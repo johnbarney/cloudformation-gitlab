@@ -1,0 +1,130 @@
+---
+Description: GitLab RDS Stack
+
+Parameters:
+  DatabaseSize:
+    Type: String
+    Default: db.m4.large
+    AllowedValues:
+      - db.t2.micro
+      - db.t2.small
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+    Description: Database Instance Size
+
+  DatabaseStorage:
+    Type: String
+    Default: 100
+    Description: Size of database in GB. Must be at least 100. Cannot exceed 6000.
+
+  DatabaseIOPS:
+    Type: String
+    Description: |
+      Database IOPS. Leave blank to use gp2 storage. Otherwise see: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html#USER_PIOPS
+
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    MinLength: 8
+    MaxLength: 41
+    Description: Enter a database password. Do not include characters " \ or @.
+
+Conditions:
+  UseDatabaseIOPS: !Not [!Equals [!Ref DatabaseIOPS, ""]]
+
+Resources:
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Database Security Group
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 5432
+        ToPort: 5432
+        SourceSecurityGroupId:
+          Fn::ImportValue: GitLab-Application-SecurityGroup
+      SecurityGroupEgress:
+      - CidrIp: 127.0.0.1/32
+        IpProtocol: "-1"
+      Tags:
+        - Key: Name
+          Value: GitLab Database Security Group
+      VpcId:
+        Fn::ImportValue: GitLab-VPC
+
+  ApplicationToRDS:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId:
+        Ref: SecurityGroup
+      FromPort: 5432
+      ToPort: 5432
+      IpProtocol: tcp
+      GroupId:
+        Fn::ImportValue: GitLab-Application-SecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: GitLab-Subnet-Group
+      SubnetIds:
+        - Fn::ImportValue: GitLab-Database-A
+        - Fn::ImportValue: GitLab-Database-B
+        - Fn::ImportValue: GitLab-Database-C
+      Tags:
+        - Key: Name
+          Value: GitLab-Subnet-Group
+
+  EventSubscription:
+    Type: AWS::RDS::EventSubscription
+    Properties:
+      Enabled: true
+      EventCategories:
+      - configuration change
+      - failure
+      - deletion
+      - availability
+      - failover
+      - maintenance
+      - notification
+      - read replica
+      - recovery
+      - low storage
+      SnsTopicArn:
+        Fn::ImportValue: GitLab-SNS-Topic
+      SourceIds:
+      - Ref: Database
+      SourceType: db-instance
+      
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage:
+        Ref: DatabaseStorage
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: 7
+      DBInstanceClass:
+        Ref: DatabaseSize
+      DBName: gitlabhq_production
+      DBSubnetGroupName:
+        Ref: DatabaseSubnetGroup
+      Engine: postgres
+      Iops:
+        Ref: DatabaseIOPS
+      MasterUsername: gitlab
+      MasterUserPassword:
+        Ref: DatabasePassword
+      MultiAZ: true
+      PubliclyAccessible: false
+      StorageType: !If [UseDatabaseIOPS, io1, gp2]
+      VPCSecurityGroups:
+        - Ref: SecurityGroup
+
+Outputs:
+  DatabaseEndpoint:
+    Description: Database Endpoint Address
+    Value:
+      Fn::GetAtt: Database.Endpoint.Address
+      

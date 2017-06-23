@@ -1,0 +1,77 @@
+---
+Description: GitLab ElastiCache Stack
+
+Parameters:
+  CacheSize:
+    Type: String
+    Default: cache.m3.medium
+    AllowedValues:
+      - cache.t2.micro
+      - cache.t2.small
+      - cache.m3.medium
+      - cache.m4.large
+      - cache.r3.large
+    Description: Cache Node instance size.
+
+Resources:
+  SubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: GitLab-ElastiCashe-Subnet-Group
+      Description: ElastiCache Subnet Group for GitLab
+      SubnetIds:
+        - Fn::ImportValue: GitLab-Database-A
+        - Fn::ImportValue: GitLab-Database-B
+        - Fn::ImportValue: GitLab-Database-C
+  SecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab ElastiCache Security Group
+      SecurityGroupIngress:
+      - IpProtocol: tcp
+        FromPort: 6379
+        ToPort: 6379
+        SourceSecurityGroupId:
+          Fn::ImportValue: GitLab-Application-SecurityGroup
+      SecurityGroupEgress:
+      - CidrIp: 127.0.0.1/32
+        IpProtocol: "-1"
+      Tags:
+        - Key: Name
+          Value: GitLab ElastiCache Security Group
+      VpcId:
+        Fn::ImportValue: GitLab-VPC
+  ApplicationToElastiCache:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId:
+        Ref: SecurityGroup
+      FromPort: 6379
+      ToPort: 6379
+      IpProtocol: tcp
+      GroupId:
+        Fn::ImportValue: GitLab-Application-SecurityGroup
+  Cache:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      AutomaticFailoverEnabled: true
+      AutoMinorVersionUpgrade: true
+      CacheNodeType:
+        Ref: CacheSize
+      CacheSubnetGroupName:
+        Ref: SubnetGroup
+      Engine: redis
+      NodeGroupConfiguration:
+        - ReplicaCount: 2
+      NotificationTopicArn:
+        Fn::ImportValue: GitLab-SNS-Topic
+      ReplicationGroupDescription: GitLab Redis Cluster
+      SecurityGroupIds:
+        - Ref: SecurityGroup
+
+Outputs:
+  CacheEndpoint:
+    Description: Cache Endpoint Address
+    Value:
+      Fn::GetAtt: Cache.PrimaryEndPoint.Address
+      

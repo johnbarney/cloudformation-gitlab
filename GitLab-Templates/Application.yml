@@ -1,0 +1,356 @@
+---
+Description: GitLab Application Stack
+
+Parameters:
+  HostZone:
+    Type: String
+    Description: DNS Zone to create A records
+
+  CertificateID:
+    Type: String
+    Description: SSL Certificate ARN
+
+  GitLabKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Enter keyname for GitLab instance access.
+
+  ApplicationSize:
+    Type: String
+    Default: t2.large
+    AllowedValues:
+      - t2.micro
+      - t2.small
+      - t2.large
+      - m3.medium
+      - m4.large
+      - m4.xlarge
+      - c4.large
+    Description: GitLab Application instance size.
+
+  ApplicationImage:
+    Type: AWS::EC2::Image::Id
+    Description: Image to use for GitLab servers
+
+
+Resources:
+  AutoScaleGroup:
+    UpdatePolicy:
+      AutoScalingScheduledAction:
+        IgnoreUnmodifiedGroupSizeProperties: true
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 2
+        SuspendProcesses:
+        - ReplaceUnhealthy
+        - AZRebalance
+        - ScheduledActions
+        - AlarmNotification
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      Cooldown: 300
+      DesiredCapacity: 2
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchConfigurationName:
+        Ref: LaunchConfig
+      LoadBalancerNames:
+        - Ref: LoadBalancer
+      MaxSize: 2
+      MetricsCollection:
+        - Granularity: 1Minute
+      MinSize: 2
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          TopicARN:
+            Fn::ImportValue: GitLab-SNS-Topic
+      VPCZoneIdentifier:
+        - Fn::ImportValue: GitLab-Private-A
+        - Fn::ImportValue: GitLab-Private-B
+        - Fn::ImportValue: GitLab-Private-C
+      Tags:
+      - Key: Name
+        Value: GitLab Application Instance
+        PropagateAtLaunch: true
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile:
+        Ref: IAMProfile
+      ImageId:
+        Ref: ApplicationImage
+      InstanceMonitoring: true
+      InstanceType:
+        Ref: ApplicationSize
+      KeyName:
+        Ref: GitLabKeyName
+      SecurityGroups:
+        - Ref: ApplicationSecurityGroup
+        - Fn::ImportValue: GitLab-Base-SecurityGroup
+
+  ApplicationTestInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile:
+        Ref: IAMProfile
+      ImageId:
+        Ref: ApplicationImage
+      InstanceType:
+        Ref: ApplicationSize
+      KeyName:
+        Ref: GitLabKeyName
+      Monitoring: true
+      SecurityGroupIds:
+        - Ref: ApplicationSecurityGroup
+        - Fn::ImportValue: GitLab-Base-SecurityGroup
+      SubnetId:
+        Fn::ImportValue: GitLab-Private-A
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: true
+            VolumeSize: 30
+      Tags:
+      - Key: Name
+        Value: GitLab Test Instance
+
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Security Group
+      Tags:
+      - Key: Name
+        Value: GitLab Security Group
+      VpcId:
+        Fn::ImportValue: GitLab-VPC
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Load Balancer Security Group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+      Tags:
+      - Key: Name
+        Value: GitLab Load Balancer Security Group
+      VpcId:
+        Fn::ImportValue: GitLab-VPC
+
+  BastionSSHApplication:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId:
+        Ref: ApplicationSecurityGroup
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId:
+        Fn::ImportValue: GitLab-Bastion-SecurityGroup
+
+  NFSin:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId:
+        Ref: ApplicationSecurityGroup
+      FromPort: 2049
+      ToPort: 2049
+      IpProtocol: tcp
+      GroupId:
+        Ref: ApplicationSecurityGroup
+
+  NFSout:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      SourceSecurityGroupId:
+        Ref: ApplicationSecurityGroup
+      FromPort: 2049
+      ToPort: 2049
+      IpProtocol: tcp
+      GroupId:
+        Ref: ApplicationSecurityGroup
+
+  SMTP:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      CidrIp: 0.0.0.0/0
+      FromPort: 465
+      ToPort: 465
+      IpProtocol: tcp
+      GroupId:
+        Ref: ApplicationSecurityGroup
+
+  ApplicationToLB:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId:
+        Ref: ApplicationSecurityGroup
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+      GroupId:
+        Ref: LoadBalancerSecurityGroup
+
+  LBToApplication:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+      GroupId:
+        Ref: ApplicationSecurityGroup
+      SourceSecurityGroupId:
+        Ref: LoadBalancerSecurityGroup
+
+  IAMProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - Ref: IAMRole
+
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument: |
+        {
+          "Version": "2012-10-17",
+          "Statement": [
+            {
+              "Effect": "Allow",
+              "Principal": {
+                "Service": "ec2.amazonaws.com"
+              },
+              "Action": "sts:AssumeRole"
+            }
+          ]
+        }
+      RoleName: GitLab-Role
+
+  TestLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: 2
+        Interval: 10
+        Target: TCP:80
+        Timeout: 5
+        UnhealthyThreshold: 2
+      Instances:
+        - Ref: ApplicationTestInstance
+      Listeners:
+        - InstancePort: 80
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 80
+          Protocol: HTTP
+        - InstancePort: 80
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 443
+          Protocol: HTTPS
+          SSLCertificateId:
+            Ref: CertificateID
+      SecurityGroups:
+        - Ref: LoadBalancerSecurityGroup
+      Subnets:
+        - Fn::ImportValue: GitLab-Public-A
+        - Fn::ImportValue: GitLab-Public-B
+        - Fn::ImportValue: GitLab-Public-C
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: 2
+        Interval: 10
+        Target: TCP:80
+        Timeout: 5
+        UnhealthyThreshold: 2
+      Listeners:
+        - InstancePort: 80
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 80
+          Protocol: HTTP
+        - InstancePort: 80
+          InstanceProtocol: HTTP
+          LoadBalancerPort: 443
+          Protocol: HTTPS
+          SSLCertificateId:
+            Ref: CertificateID
+      SecurityGroups:
+        - Ref: LoadBalancerSecurityGroup
+      Subnets:
+        - Fn::ImportValue: GitLab-Public-A
+        - Fn::ImportValue: GitLab-Public-B
+        - Fn::ImportValue: GitLab-Public-C
+
+  DNSEndpoint:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt: LoadBalancer.CanonicalHostedZoneName
+        HostedZoneId:
+          Fn::GetAtt: LoadBalancer.CanonicalHostedZoneNameID
+      Comment: GitLab DNS Endpoint
+      HostedZoneName:
+        Ref: HostZone
+      Name: !Join ['.', ['gitlab', !Ref 'HostZone']]
+      Type: A
+
+  TestDNSEndpoint:
+    Type: AWS::Route53::RecordSet
+    Properties:
+      AliasTarget:
+        DNSName:
+          Fn::GetAtt: TestLoadBalancer.CanonicalHostedZoneName
+        HostedZoneId:
+          Fn::GetAtt: TestLoadBalancer.CanonicalHostedZoneNameID
+      Comment: GitLab Test DNS Endpoint
+      HostedZoneName:
+        Ref: HostZone
+      Name: !Join ['.', ['test-gitlab', !Ref 'HostZone']]
+      Type: A
+
+
+Outputs:
+  ApplicationSecurityGroup:
+    Description: Application Security Group
+    Value:
+      Ref: ApplicationSecurityGroup
+    Export:
+      Name: GitLab-Application-SecurityGroup
+
+  TestURL:
+    Description: Application Test URL
+    Value:
+      Ref: TestDNSEndpoint
+
+  URL:
+    Description: Application URL
+    Value:
+      Ref: DNSEndpoint
+      
