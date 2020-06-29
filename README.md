@@ -45,7 +45,3 @@ https://docs.gitlab.com/omnibus/settings/smtp.html - Email settings
 https://docs.gitlab.com/ee/administration/high_availability/gitlab.html - Configure GitLab for HA (The intention of this repo)
 
 https://gitlab.com/gitlab-org/omnibus-gitlab/blob/master/doc/settings/gitlab.yml.md - For help setting timezone
-
-## Warnings:
-
-Do not delete or modify any resource associated with the CloudFormation stack without using CloudFormation. This will cause the stack to enter a state in which it is unable to be updated via CloudFormation.

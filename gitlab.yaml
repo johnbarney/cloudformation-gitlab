@@ -1,0 +1,1038 @@
+---
+Description: GitLab Control Stack
+
+Parameters:
+  CertificateID:
+    Type: String
+    Default: ""
+    Description: SSL Certificate ARN
+
+  HostZone:
+    Type: String
+    Default: ""
+    Description: DNS Zone to create A records
+
+  BastionKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Enter keyname for Bastion instance access. (Required)
+
+  IPWhiteList:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    Description: IP range allowed to VPN into Bastion. (Not recommended to leave default)
+
+  GitLabKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Enter keyname for GitLab instance access.
+
+  ApplicationImage:
+    Type: AWS::EC2::Image::Id
+    Default: ""
+    Description: Image to use for GitLab servers
+
+  BastionImage:
+    Type: AWS::EC2::Image::Id
+    Default: ""
+    Description: Image to use for Bastion host
+
+  ApplicationSize:
+    Type: String
+    Default: t2.large
+    AllowedValues:
+      - t2.large
+      - m5.large
+      - m5.xlarge
+      - c4.large
+    Description: GitLab Application instance size.
+
+  CacheSize:
+    Type: String
+    Default: cache.m3.medium
+    AllowedValues:
+      - cache.t2.small
+      - cache.m3.medium
+      - cache.m4.large
+      - cache.r3.large
+    Description: Cache Node instance size.
+
+  DatabaseSize:
+    Type: String
+    Default: db.m4.large
+    AllowedValues:
+      - db.t2.small
+      - db.m4.large
+      - db.m4.xlarge
+      - db.m4.2xlarge
+    Description: Database Instance Size
+
+  DatabaseStorage:
+    Type: Number
+    Default: "100"
+    Description: Size of database in GB. Must be at least 100. Cannot exceed 6000.
+
+  DatabaseIOPS:
+    Type: String
+    Description: |
+      Database IOPS. Leave blank to use gp2 storage. Otherwise see: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html#USER_PIOPS
+
+  DatabasePassword:
+    Type: String
+    NoEcho: true
+    MinLength: "8"
+    MaxLength: "41"
+    Description: Enter a database password. Do not include characters " \ or @.
+
+Conditions:
+  UseDatabaseIOPS: !Not [!Equals [!Ref DatabaseIOPS, ""]]
+  CreateDNS: !Not [!Equals [!Ref HostZone, ""]]
+  UseSSL: !Not [!Equals [!Ref CertificateID, ""]]
+  NoSSL: !Equals [!Ref CertificateID, ""]
+
+Resources:
+  VPC:
+    Type: AWS::EC2::VPC
+    Properties:
+      CidrBlock: 10.33.0.0/18
+      EnableDnsSupport: true
+      EnableDnsHostnames: true
+      InstanceTenancy: default
+      Tags:
+        - Key: Name
+          Value: GitLab VPC
+
+  PublicA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.33.10.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: GitLab Public Subnet A
+      VpcId: !Ref VPC
+
+  PublicB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.33.11.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: GitLab Public Subnet B
+      VpcId: !Ref VPC
+
+  PublicC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: 10.33.12.0/24
+      MapPublicIpOnLaunch: true
+      Tags:
+        - Key: Name
+          Value: GitLab Public Subnet C
+      VpcId: !Ref VPC
+
+  PrivateA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.33.20.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Private Subnet A
+      VpcId: !Ref VPC
+
+  PrivateB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.33.21.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Private Subnet B
+      VpcId: !Ref VPC
+
+  PrivateC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: 10.33.22.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Priate Subnet C
+      VpcId: !Ref VPC
+
+  DatabaseA:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [0, !GetAZs ""]
+      CidrBlock: 10.33.30.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Database Subnet A
+      VpcId: !Ref VPC
+
+  DatabaseB:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [1, !GetAZs ""]
+      CidrBlock: 10.33.31.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Database Subnet B
+      VpcId: !Ref VPC
+
+  DatabaseC:
+    Type: AWS::EC2::Subnet
+    Properties:
+      AvailabilityZone: !Select [2, !GetAZs ""]
+      CidrBlock: 10.33.32.0/24
+      Tags:
+        - Key: Name
+          Value: GitLab Database Subnet C
+      VpcId: !Ref VPC
+
+  DatabaseACL:
+    Type: AWS::EC2::NetworkAcl
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: GitLab Database ACL
+
+  EmphemeralACLEntryA:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 500
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 10.33.20.0/24
+      PortRange:
+        From: 32768
+        To: 61000
+
+  EmphemeralACLEntryB:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 510
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 10.33.21.0/24
+      PortRange:
+        From: 32768
+        To: 61000
+
+  EmphemeralACLEntryC:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 520
+      Protocol: 6
+      RuleAction: allow
+      Egress: true
+      CidrBlock: 10.33.22.0/24
+      PortRange:
+        From: 32768
+        To: 61000
+
+  PostgresqlACLEntryA:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 200
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.20.0/24
+      PortRange:
+        From: 5432
+        To: 5432
+
+  PostgresqlACLEntryB:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 210
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.21.0/24
+      PortRange:
+        From: 5432
+        To: 5432
+
+  PostgresqlACLEntryC:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 220
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.22.0/24
+      PortRange:
+        From: 5432
+        To: 5432
+
+  RedisACLEntryA:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 300
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.20.0/24
+      PortRange:
+        From: 6379
+        To: 6379
+
+  RedisACLEntryB:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 310
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.21.0/24
+      PortRange:
+        From: 6379
+        To: 6379
+
+  RedisACLEntryC:
+    Type: AWS::EC2::NetworkAclEntry
+    Properties:
+      NetworkAclId: !Ref DatabaseACL
+      RuleNumber: 320
+      Protocol: 6
+      RuleAction: allow
+      Egress: false
+      CidrBlock: 10.33.22.0/24
+      PortRange:
+        From: 6379
+        To: 6379
+
+  DatabaseACLAssociationA:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseA
+      NetworkAclId: !Ref DatabaseACL
+
+  DatabaseACLAssociationB:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseB
+      NetworkAclId: !Ref DatabaseACL
+
+  DatabaseACLAssociationC:
+    Type: AWS::EC2::SubnetNetworkAclAssociation
+    Properties:
+      SubnetId: !Ref DatabaseC
+      NetworkAclId: !Ref DatabaseACL
+
+  PublicRouteTable:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: GitLab Public Route Table
+
+  PrivateRouteTableA:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: GitLab Private Route Table A
+
+  PrivateRouteTableB:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: GitLab Private Route Table B
+
+  PrivateRouteTableC:
+    Type: AWS::EC2::RouteTable
+    Properties:
+      VpcId: !Ref VPC
+      Tags:
+        - Key: Name
+          Value: GitLab Private Route Table C
+
+  PublicARouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicA
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicBRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicB
+      RouteTableId: !Ref PublicRouteTable
+
+  PublicCRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PublicC
+      RouteTableId: !Ref PublicRouteTable
+
+  PrivateARouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateA
+      RouteTableId: !Ref PrivateRouteTableA
+
+  PrivateBRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateB
+      RouteTableId: !Ref PrivateRouteTableB
+
+  PrivateCRouteTableAssoc:
+    Type: AWS::EC2::SubnetRouteTableAssociation
+    Properties:
+      SubnetId: !Ref PrivateC
+      RouteTableId: !Ref PrivateRouteTableC
+
+  InternetGateway:
+    Type: AWS::EC2::InternetGateway
+    Properties:
+      Tags:
+        - Key: Name
+          Value: GitLab Internet Gateway
+
+  AttachGateway:
+    Type: AWS::EC2::VPCGatewayAttachment
+    Properties:
+      VpcId: !Ref VPC
+      InternetGatewayId: !Ref InternetGateway
+
+  PublicGatewayRoute:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PublicRouteTable
+      DestinationCidrBlock: 0.0.0.0/0
+      GatewayId: !Ref InternetGateway
+
+  NATA:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt [NATAEIP, AllocationId]
+      SubnetId: !Ref PublicA
+
+  NATAEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATRouteA:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableA
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATA
+
+  NATB:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt [NATBEIP, AllocationId]
+      SubnetId: !Ref PublicB
+
+  NATBEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATRouteB:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableB
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATB
+
+  NATC:
+    DependsOn: AttachGateway
+    Type: AWS::EC2::NatGateway
+    Properties:
+      AllocationId: !GetAtt [NATCEIP, AllocationId]
+      SubnetId: !Ref PublicC
+
+  NATCEIP:
+    Type: AWS::EC2::EIP
+    Properties:
+      Domain: vpc
+
+  NATRouteC:
+    Type: AWS::EC2::Route
+    Properties:
+      RouteTableId: !Ref PrivateRouteTableC
+      DestinationCidrBlock: 0.0.0.0/0
+      NatGatewayId: !Ref NATC
+
+  BastionSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allow SSH access to Bastion
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          CidrIp: !Ref IPWhiteList
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: GitLab Bastion Security Group
+
+  PrivateInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: Allows Private instances HTTP/HTTPS access out
+      VpcId: !Ref VPC
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 22
+          ToPort: 22
+          SourceSecurityGroupId: !Ref BastionSecurityGroup
+      SecurityGroupEgress:
+        - IpProtocol: tcp
+          FromPort: 80
+          ToPort: 80
+          CidrIp: 0.0.0.0/0
+        - IpProtocol: tcp
+          FromPort: 443
+          ToPort: 443
+          CidrIp: 0.0.0.0/0
+      Tags:
+        - Key: Name
+          Value: GitLab Private Instance Security Group
+
+  BastionInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref BastionImage
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      SubnetId: !Ref PublicA
+      InstanceType: t2.micro
+      KeyName: !Ref BastionKeyName
+      Tags:
+        - Key: Name
+          Value: GitLab Bastion
+
+  SNSTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: GitLab
+
+  AutoScaleGroup:
+    UpdatePolicy:
+      AutoScalingScheduledAction:
+        IgnoreUnmodifiedGroupSizeProperties: true
+      AutoScalingRollingUpdate:
+        MinInstancesInService: 1
+        MaxBatchSize: 2
+        SuspendProcesses:
+          - ReplaceUnhealthy
+          - AZRebalance
+          - ScheduledActions
+          - AlarmNotification
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      Cooldown: "300"
+      DesiredCapacity: "2"
+      HealthCheckGracePeriod: 300
+      HealthCheckType: ELB
+      LaunchConfigurationName: !Ref LaunchConfig
+      LoadBalancerNames:
+        - !If [UseSSL, !Ref LoadBalancerSSL, !Ref LoadBalancer]
+      MaxSize: "2"
+      MetricsCollection:
+        - Granularity: 1Minute
+      MinSize: "2"
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          TopicARN: !Ref SNSTopic
+      VPCZoneIdentifier:
+        - !Ref PrivateA
+        - !Ref PrivateB
+        - !Ref PrivateC
+      Tags:
+        - Key: Name
+          Value: GitLab Application Instance
+          PropagateAtLaunch: true
+
+  LaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile: !Ref IAMProfile
+      ImageId: !Ref ApplicationImage
+      InstanceMonitoring: true
+      InstanceType: !Ref ApplicationSize
+      KeyName: !Ref GitLabKeyName
+      SecurityGroups:
+        - !Ref ApplicationSecurityGroup
+        - !Ref PrivateInstanceSecurityGroup
+
+  ApplicationTestInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      IamInstanceProfile: !Ref IAMProfile
+      ImageId: !Ref ApplicationImage
+      InstanceType: !Ref ApplicationSize
+      KeyName: !Ref GitLabKeyName
+      Monitoring: true
+      SecurityGroupIds:
+        - !Ref ApplicationSecurityGroup
+        - !Ref PrivateInstanceSecurityGroup
+      SubnetId: !Ref PrivateA
+      BlockDeviceMappings:
+        - DeviceName: /dev/xvda
+          Ebs:
+            VolumeType: gp2
+            DeleteOnTermination: true
+            VolumeSize: 30
+      Tags:
+        - Key: Name
+          Value: GitLab Test Instance
+
+  ApplicationSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Security Group
+      Tags:
+        - Key: Name
+          Value: GitLab Security Group
+      VpcId: !Ref VPC
+
+  LoadBalancerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Load Balancer Security Group
+      SecurityGroupIngress:
+        - CidrIp: 0.0.0.0/0
+          FromPort: 443
+          ToPort: 443
+          IpProtocol: tcp
+        - CidrIp: 0.0.0.0/0
+          FromPort: 80
+          ToPort: 80
+          IpProtocol: tcp
+      Tags:
+        - Key: Name
+          Value: GitLab Load Balancer Security Group
+      VpcId: !Ref VPC
+
+  BastionSSHApplication:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref ApplicationSecurityGroup
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId: !Ref BastionSecurityGroup
+
+  SMTP:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      CidrIp: 0.0.0.0/0
+      FromPort: 465
+      ToPort: 465
+      IpProtocol: tcp
+      GroupId: !Ref ApplicationSecurityGroup
+
+  ApplicationToLB:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref ApplicationSecurityGroup
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+      GroupId: !Ref LoadBalancerSecurityGroup
+
+  LBToApplication:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 80
+      ToPort: 80
+      IpProtocol: tcp
+      GroupId: !Ref ApplicationSecurityGroup
+      SourceSecurityGroupId: !Ref LoadBalancerSecurityGroup
+
+  IAMProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref IAMRole
+
+  IAMRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      RoleName: GitLab-Role
+
+  IAMPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: GitLab
+      Roles:
+        - !Ref IAMRole
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action:
+              - s3:AbortMultipartUpload
+              - s3:CompleteMultipartUpload
+              - s3:ListBucket
+              - s3:PutObject
+              - s3:GetObject
+              - s3:DeleteObject
+              - s3:PutObjectAcl
+            Resource:
+              - arn:aws:s3:::gl-*/*"
+
+  LoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Condition: NoSSL
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: "2"
+        Interval: "10"
+        Target: TCP:80
+        Timeout: "5"
+        UnhealthyThreshold: "2"
+      Listeners:
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "80"
+          Protocol: HTTP
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicA
+        - !Ref PublicB
+        - !Ref PublicC
+
+  TestLoadBalancer:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Condition: NoSSL
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: "2"
+        Interval: "10"
+        Target: TCP:80
+        Timeout: "5"
+        UnhealthyThreshold: "2"
+      Instances:
+        - !Ref ApplicationTestInstance
+      Listeners:
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "80"
+          Protocol: HTTP
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicA
+        - !Ref PublicB
+        - !Ref PublicC
+
+  LoadBalancerSSL:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Condition: UseSSL
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: "2"
+        Interval: "10"
+        Target: TCP:80
+        Timeout: "5"
+        UnhealthyThreshold: "2"
+      Listeners:
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "80"
+          Protocol: HTTP
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "443"
+          Protocol: HTTPS
+          SSLCertificateId: !Ref CertificateID
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicA
+        - !Ref PublicB
+        - !Ref PublicC
+
+  TestLoadBalancerSSL:
+    Type: AWS::ElasticLoadBalancing::LoadBalancer
+    Condition: UseSSL
+    Properties:
+      #AccessLoggingPolicy:
+      #  AccessLoggingPolicy
+      ConnectionDrainingPolicy:
+        Enabled: true
+        Timeout: 300
+      ConnectionSettings:
+        IdleTimeout: 60
+      CrossZone: true
+      HealthCheck:
+        HealthyThreshold: "2"
+        Interval: "10"
+        Target: TCP:80
+        Timeout: "5"
+        UnhealthyThreshold: "2"
+      Instances:
+        - !Ref ApplicationTestInstance
+      Listeners:
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "80"
+          Protocol: HTTP
+        - InstancePort: "80"
+          InstanceProtocol: HTTP
+          LoadBalancerPort: "443"
+          Protocol: HTTPS
+          SSLCertificateId:
+            !Ref CertificateID
+      SecurityGroups:
+        - !Ref LoadBalancerSecurityGroup
+      Subnets:
+        - !Ref PublicA
+        - !Ref PublicB
+        - !Ref PublicC
+
+  DNSEndpoint:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDNS
+    Properties:
+      AliasTarget:
+        DNSName: !If [UseSSL, !GetAtt LoadBalancerSSL.CanonicalHostedZoneName, !GetAtt LoadBalancer.CanonicalHostedZoneName]
+        HostedZoneId: !If [UseSSL, !GetAtt LoadBalancerSSL.CanonicalHostedZoneNameID, !GetAtt LoadBalancer.CanonicalHostedZoneNameID]
+      Comment: GitLab DNS Endpoint
+      HostedZoneName: !Ref HostZone
+      Name: !Join ['.', ['gitlab', !Ref 'HostZone']]
+      Type: A
+
+  TestDNSEndpoint:
+    Type: AWS::Route53::RecordSet
+    Condition: CreateDNS
+    Properties:
+      AliasTarget:
+        DNSName: !If [UseSSL, !GetAtt TestLoadBalancerSSL.CanonicalHostedZoneName, !GetAtt TestLoadBalancer.CanonicalHostedZoneName]
+        HostedZoneId: !If [UseSSL, !GetAtt TestLoadBalancerSSL.CanonicalHostedZoneNameID, !GetAtt TestLoadBalancer.CanonicalHostedZoneNameID]
+      Comment: GitLab Test DNS Endpoint
+      HostedZoneName: !Ref HostZone
+      Name: !Join ['.', ['test-gitlab', !Ref 'HostZone']]
+      Type: A
+
+  DBSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Database Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 5432
+          ToPort: 5432
+          SourceSecurityGroupId: !Ref PrivateInstanceSecurityGroup
+      SecurityGroupEgress:
+        - CidrIp: 127.0.0.1/32
+          IpProtocol: "-1"
+      Tags:
+        - Key: Name
+          Value: GitLab Database Security Group
+      VpcId: !Ref VPC
+
+  ApplicationToRDS:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref DBSecurityGroup
+      FromPort: 5432
+      ToPort: 5432
+      IpProtocol: tcp
+      GroupId: !Ref PrivateInstanceSecurityGroup
+
+  DatabaseSubnetGroup:
+    Type: AWS::RDS::DBSubnetGroup
+    Properties:
+      DBSubnetGroupDescription: GitLab-Subnet-Group
+      SubnetIds:
+        - !Ref DatabaseA
+        - !Ref DatabaseB
+        - !Ref DatabaseC
+      Tags:
+        - Key: Name
+          Value: GitLab-Subnet-Group
+
+  EventSubscription:
+    Type: AWS::RDS::EventSubscription
+    Properties:
+      Enabled: true
+      EventCategories:
+        - configuration change
+        - failure
+        - deletion
+        - availability
+        - failover
+        - maintenance
+        - notification
+        - read replica
+        - recovery
+        - low storage
+      SnsTopicArn: !Ref SNSTopic
+      SourceIds:
+        - !Ref Database
+      SourceType: db-instance
+
+  Database:
+    Type: AWS::RDS::DBInstance
+    Properties:
+      AllocatedStorage: !Ref DatabaseStorage
+      AllowMajorVersionUpgrade: false
+      AutoMinorVersionUpgrade: true
+      BackupRetentionPeriod: 7
+      DBInstanceClass: !Ref DatabaseSize
+      DBName: gitlabhq_production
+      DBSubnetGroupName: !Ref DatabaseSubnetGroup
+      Engine: postgres
+      Iops: !Ref DatabaseIOPS
+      MasterUsername: gitlab
+      MasterUserPassword: !Ref DatabasePassword
+      MultiAZ: true
+      PubliclyAccessible: false
+      StorageType: !If [UseDatabaseIOPS, io1, gp2]
+      VPCSecurityGroups:
+        - !Ref DBSecurityGroup
+
+  SubnetGroup:
+    Type: AWS::ElastiCache::SubnetGroup
+    Properties:
+      CacheSubnetGroupName: GitLab-ElastiCashe-Subnet-Group
+      Description: ElastiCache Subnet Group for GitLab
+      SubnetIds:
+        - !Ref DatabaseA
+        - !Ref DatabaseB
+        - !Ref DatabaseC
+
+  CacheSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab ElastiCache Security Group
+      SecurityGroupIngress:
+        - IpProtocol: tcp
+          FromPort: 6379
+          ToPort: 6379
+          SourceSecurityGroupId: !Ref PrivateInstanceSecurityGroup
+      SecurityGroupEgress:
+        - CidrIp: 127.0.0.1/32
+          IpProtocol: "-1"
+      Tags:
+        - Key: Name
+          Value: GitLab ElastiCache Security Group
+      VpcId: !Ref VPC
+
+  ApplicationToElastiCache:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref CacheSecurityGroup
+      FromPort: 6379
+      ToPort: 6379
+      IpProtocol: tcp
+      GroupId: !Ref PrivateInstanceSecurityGroup
+
+  Cache:
+    Type: AWS::ElastiCache::ReplicationGroup
+    Properties:
+      AutomaticFailoverEnabled: true
+      AutoMinorVersionUpgrade: true
+      CacheNodeType: !Ref CacheSize
+      CacheSubnetGroupName: !Ref SubnetGroup
+      Engine: redis
+      NodeGroupConfiguration:
+        - ReplicaCount: 2
+      NotificationTopicArn: !Ref SNSTopic
+      ReplicationGroupDescription: GitLab Redis Cluster
+      SecurityGroupIds:
+        - !Ref CacheSecurityGroup
+
+Outputs:
+  TestURL:
+    Condition: CreateDNS
+    Description: Application Test URL
+    Value: !Ref TestDNSEndpoint
+
+  URL:
+    Condition: CreateDNS
+    Description: Application URL
+    Value: !Ref DNSEndpoint
+
+  CacheEndpoint:
+    Description: Cache Endpoint Address
+    Value: !GetAtt Cache.PrimaryEndPoint.Address
+
+  DatabaseEndpoint:
+    Description: Database Endpoint Address
+    Value: !GetAtt Database.Endpoint.Address
+
+  SNSTopic:
+    Description: GitLab SNS Topic
+    Value: !Ref SNSTopic
+
+  BastionIP:
+    Description: Public IP of the SSH Bastion
+    Value:
+      Fn::GetAtt: BastionInstance.PublicIp
