@@ -13,11 +13,22 @@ Metadata:
           - CertificateID
           - HostZone
       - Label:
-          default: "SSH Configuration"
+          default: "Bastion Configuration"
         Parameters:
           - BastionKeyName
           - BastionImage
           - IPWhiteList
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - ApplicationImage
+          - ApplicationSize
+          - GitLabKeyName
+      - Label:
+          default: "Runner Configuration"
+        Parameters:
+          - RunnerImage
+          - RunnerKeyName
       - Label:
           default: "Database Configuration"
         Parameters:
@@ -30,12 +41,7 @@ Metadata:
         Parameters:
           - CacheSize
           - CacheReplicaCount
-      - Label:
-          default: "Application Configuration"
-        Parameters:
-          - ApplicationImage
-          - ApplicationSize
-          - GitLabKeyName
+
     ParameterLabels:
       CertificateID:
         default: "ACM SSL Certificate ARN"
@@ -44,9 +50,11 @@ Metadata:
       IPWhiteList:
         default: "IP range allowed to SSH into Bastion"
       BastionKeyName:
-        default: "SSH Key to use for Bastion host"
+        default: "SSH Key for Bastion host"
+      BastionImage:
+        default: "Bastion Image (AMI)"
       GitLabKeyName:
-        default: "SSH Key to use for GitLab test host"
+        default: "SSH Key for GitLab Test Host"
       DatabaseSize:
         default: "Database Instance Size"
       DatabaseStorage:
@@ -59,6 +67,12 @@ Metadata:
         default: "Cache Instance Size"
       CacheReplicaCount:
         default: "Cache Replica Count"
+      ApplicationImage:
+        default: "Application Image (AMI)"
+      ApplicationSize:
+        default: "Application Instance Size"
+      RunnerImage:
+        default: "Runner Image (AMI)"
 
 Parameters:
   CertificateID:
@@ -85,11 +99,19 @@ Parameters:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Required
 
+  RunnerKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Required
+
   ApplicationImage:
     Type: AWS::EC2::Image::Id
     Description: Required
 
   BastionImage:
+    Type: AWS::EC2::Image::Id
+    Description: Required
+
+  RunnerImage:
     Type: AWS::EC2::Image::Id
     Description: Required
 
@@ -146,6 +168,51 @@ Parameters:
     MaxLength: "41"
     Description: Do not include characters " \ or @.
 
+Mappings:
+  RegionMap:
+    us-east-1:
+      ELBAccount: 127311923021
+    us-east-2:
+      ELBAccount: 033677994240
+    us-west-1:
+      ELBAccount: 027434742980
+    us-west-2:
+      ELBAccount: 797873946194
+    af-south-1:
+      ELBAccount: 098369216593
+    ca-central-1:
+      ELBAccount: 985666609251
+    eu-central-1:
+      ELBAccount: 054676820928
+    eu-west-1:
+      ELBAccount: 156460612806
+    eu-west-2:
+      ELBAccount: 652711504416
+    eu-south-1:
+      ELBAccount: 635631232127
+    eu-west-3:
+      ELBAccount: 009996457667
+    eu-north-1:
+      ELBAccount: 897822967062
+    ap-east-1:
+      ELBAccount: 754344448648
+    ap-northeast-1:
+      ELBAccount: 582318560864
+    ap-northeast-2:
+      ELBAccount: 600734575887
+    ap-northeast-3:
+      ELBAccount: 383597477331
+    ap-southeast-1:
+      ELBAccount: 114774131450
+    ap-southeast-2:
+      ELBAccount: 783225319266
+    ap-south-1:
+      ELBAccount: 718504428378
+    me-south-1:
+      ELBAccount: 076674570225
+    sa-east-1:
+      ELBAccount: 507241528517
+
 Conditions:
   UseDatabaseIOPS: !Not [!Equals [!Ref DatabaseIOPS, ""]]
   CreateDNS: !Not [!Equals [!Ref HostZone, ""]]
@@ -153,12 +220,55 @@ Conditions:
   NoSSL: !Equals [!Ref CertificateID, ""]
 
 Resources:
+
   ######
   # S3 #
   ######
 
   GitLabBucket:
     Type: AWS::S3::Bucket
+
+  GitLabBucketPolicy:
+    Type: AWS::S3::BucketPolicy
+    Properties:
+      Bucket: !Ref GitLabBucket
+      PolicyDocument: !Sub
+      - |
+        {
+            "Version": "2012-10-17",
+            "Statement": [
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "AWS": "arn:aws:iam::${ELBAccount}:root"
+                    },
+                    "Action": "s3:PutObject",
+                    "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*"
+                },
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "delivery.logs.amazonaws.com"
+                    },
+                    "Action": "s3:PutObject",
+                    "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*",
+                    "Condition": {
+                        "StringEquals": {
+                            "s3:x-amz-acl": "bucket-owner-full-control"
+                        }
+                    }
+                },
+                {
+                    "Effect": "Allow",
+                    "Principal": {
+                        "Service": "delivery.logs.amazonaws.com"
+                    },
+                    "Action": "s3:GetBucketAcl",
+                    "Resource": "${GitLabBucket.Arn}"
+                }
+            ]
+        }
+      - { ELBAccount: !FindInMap [ RegionMap, !Ref "AWS::Region", ELBAccount ]}
 
   #######
   # VPC #
@@ -593,6 +703,19 @@ Resources:
         - Key: Name
           Value: GitLab Bastion
 
+  RunnerInstance:
+    Type: AWS::EC2::Instance
+    Properties:
+      ImageId: !Ref RunnerImage
+      SecurityGroupIds:
+        - !Ref BastionSecurityGroup
+      SubnetId: !Ref PublicA
+      InstanceType: t3.small
+      KeyName: !Ref RunnerKeyName
+      Tags:
+        - Key: Name
+          Value: GitLab Bastion
+
   #######
   # SNS #
   #######
@@ -958,12 +1081,12 @@ Resources:
 
   LoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
+    DependsOn: GitLabBucketPolicy
     Condition: NoSSL
     Properties:
-      AccessLoggingPolicy:
-        Enabled: True
-        S3BucketName: !Ref GitLabBucket
-        S3BucketPrefix: logs/elb
+      #AccessLoggingPolicy:
+      #  Enabled: True
+      #  S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -990,12 +1113,12 @@ Resources:
 
   TestLoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
+    DependsOn: GitLabBucketPolicy
     Condition: NoSSL
     Properties:
-      AccessLoggingPolicy:
-        Enabled: True
-        S3BucketName: !Ref GitLabBucket
-        S3BucketPrefix: logs/test-elb
+      #AccessLoggingPolicy:
+      #  Enabled: True
+      #  S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1022,12 +1145,12 @@ Resources:
 
   LoadBalancerSSL:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
+    DependsOn: GitLabBucketPolicy
     Condition: UseSSL
     Properties:
-      AccessLoggingPolicy:
-        Enabled: True
-        S3BucketName: !Ref GitLabBucket
-        S3BucketPrefix: logs/elb
+      #AccessLoggingPolicy:
+      #  Enabled: True
+      #  S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1059,12 +1182,12 @@ Resources:
 
   TestLoadBalancerSSL:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
+    DependsOn: GitLabBucketPolicy
     Condition: UseSSL
     Properties:
-      AccessLoggingPolicy:
-        Enabled: True
-        S3BucketName: !Ref GitLabBucket
-        S3BucketPrefix: logs/test-elb
+      #AccessLoggingPolicy:
+      #  Enabled: True
+      #  S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
