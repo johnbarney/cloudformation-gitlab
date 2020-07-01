@@ -25,11 +25,6 @@ Metadata:
           - ApplicationSize
           - GitLabKeyName
       - Label:
-          default: "Runner Configuration"
-        Parameters:
-          - RunnerImage
-          - RunnerKeyName
-      - Label:
           default: "Database Configuration"
         Parameters:
           - DatabaseSize
@@ -71,8 +66,6 @@ Metadata:
         default: "Application Image (AMI)"
       ApplicationSize:
         default: "Application Instance Size"
-      RunnerImage:
-        default: "Runner Image (AMI)"
 
 Parameters:
   CertificateID:
@@ -99,19 +92,11 @@ Parameters:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Required
 
-  RunnerKeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Required
-
   ApplicationImage:
     Type: AWS::EC2::Image::Id
     Description: Required
 
   BastionImage:
-    Type: AWS::EC2::Image::Id
-    Description: Required
-
-  RunnerImage:
     Type: AWS::EC2::Image::Id
     Description: Required
 
@@ -233,42 +218,42 @@ Resources:
     Properties:
       Bucket: !Ref GitLabBucket
       PolicyDocument: !Sub
-      - |
-        {
-            "Version": "2012-10-17",
-            "Statement": [
-                {
-                    "Effect": "Allow",
-                    "Principal": {
-                        "AWS": "arn:aws:iam::${ELBAccount}:root"
-                    },
-                    "Action": "s3:PutObject",
-                    "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*"
-                },
-                {
-                    "Effect": "Allow",
-                    "Principal": {
-                        "Service": "delivery.logs.amazonaws.com"
-                    },
-                    "Action": "s3:PutObject",
-                    "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*",
-                    "Condition": {
-                        "StringEquals": {
-                            "s3:x-amz-acl": "bucket-owner-full-control"
-                        }
-                    }
-                },
-                {
-                    "Effect": "Allow",
-                    "Principal": {
-                        "Service": "delivery.logs.amazonaws.com"
-                    },
-                    "Action": "s3:GetBucketAcl",
-                    "Resource": "${GitLabBucket.Arn}"
-                }
-            ]
-        }
-      - { ELBAccount: !FindInMap [ RegionMap, !Ref "AWS::Region", ELBAccount ]}
+        - |
+          {
+              "Version": "2012-10-17",
+              "Statement": [
+                  {
+                      "Effect": "Allow",
+                      "Principal": {
+                          "AWS": "arn:aws:iam::${ELBAccount}:root"
+                      },
+                      "Action": "s3:PutObject",
+                      "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*"
+                  },
+                  {
+                      "Effect": "Allow",
+                      "Principal": {
+                          "Service": "delivery.logs.amazonaws.com"
+                      },
+                      "Action": "s3:PutObject",
+                      "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*",
+                      "Condition": {
+                          "StringEquals": {
+                              "s3:x-amz-acl": "bucket-owner-full-control"
+                          }
+                      }
+                  },
+                  {
+                      "Effect": "Allow",
+                      "Principal": {
+                          "Service": "delivery.logs.amazonaws.com"
+                      },
+                      "Action": "s3:GetBucketAcl",
+                      "Resource": "${GitLabBucket.Arn}"
+                  }
+              ]
+          }
+        - { ELBAccount: !FindInMap [ RegionMap, !Ref "AWS::Region", ELBAccount ]}
 
   #######
   # VPC #
@@ -703,19 +688,6 @@ Resources:
         - Key: Name
           Value: GitLab Bastion
 
-  RunnerInstance:
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: !Ref RunnerImage
-      SecurityGroupIds:
-        - !Ref BastionSecurityGroup
-      SubnetId: !Ref PublicA
-      InstanceType: t3.small
-      KeyName: !Ref RunnerKeyName
-      Tags:
-        - Key: Name
-          Value: GitLab Bastion
-
   #######
   # SNS #
   #######
@@ -875,19 +847,10 @@ Resources:
   ApplicationSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: GitLab Security Group
+      GroupDescription: GitLab Application Security Group
       Tags:
         - Key: Name
-          Value: GitLab Security Group
-      VpcId: !Ref VPC
-
-  RunnerSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: GitLab Security Group
-      Tags:
-        - Key: Name
-          Value: GitLab Security Group
+          Value: GitLab Application Security Group
       VpcId: !Ref VPC
 
   LoadBalancerSecurityGroup:
@@ -959,42 +922,6 @@ Resources:
       ToPort: 5432
       IpProtocol: tcp
       GroupId: !Ref PrivateInstanceSecurityGroup
-
-  ApplicationSSHRunnerIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      SourceSecurityGroupId: !Ref ApplicationSecurityGroup
-      FromPort: 22
-      ToPort: 22
-      IpProtocol: tcp
-      GroupId: !Ref RunnerSecurityGroup
-
-  ApplicationSSHRunnerEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      DestinationSecurityGroupId: !Ref RunnerSecurityGroup
-      FromPort: 22
-      ToPort: 22
-      IpProtocol: tcp
-      GroupId: !Ref ApplicationSecurityGroup
-
-  ApplicationDockerRunnerEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      DestinationSecurityGroupId: !Ref RunnerSecurityGroup
-      FromPort: 2376
-      ToPort: 2376
-      IpProtocol: tcp
-      GroupId: !Ref ApplicationSecurityGroup
-
-  ApplicationDockerRunnerIgress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      SourceSecurityGroupId: !Ref ApplicationSecurityGroup
-      FromPort: 2376
-      ToPort: 2376
-      IpProtocol: tcp
-      GroupId: !Ref RunnerSecurityGroup
 
   BastionSSHApplicationEress:
     Type: AWS::EC2::SecurityGroupEgress
@@ -1084,9 +1011,9 @@ Resources:
     DependsOn: GitLabBucketPolicy
     Condition: NoSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  Enabled: True
-      #  S3BucketName: !Ref GitLabBucket
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1116,9 +1043,9 @@ Resources:
     DependsOn: GitLabBucketPolicy
     Condition: NoSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  Enabled: True
-      #  S3BucketName: !Ref GitLabBucket
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1148,9 +1075,9 @@ Resources:
     DependsOn: GitLabBucketPolicy
     Condition: UseSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  Enabled: True
-      #  S3BucketName: !Ref GitLabBucket
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1185,9 +1112,9 @@ Resources:
     DependsOn: GitLabBucketPolicy
     Condition: UseSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  Enabled: True
-      #  S3BucketName: !Ref GitLabBucket
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
