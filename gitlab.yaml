@@ -901,8 +901,10 @@ Resources:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Condition: NoSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  AccessLoggingPolicy
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
+        S3BucketPrefix: logs/elb
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -931,8 +933,10 @@ Resources:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Condition: NoSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  AccessLoggingPolicy
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
+        S3BucketPrefix: logs/test-elb
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -961,8 +965,10 @@ Resources:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Condition: UseSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  AccessLoggingPolicy
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
+        S3BucketPrefix: logs/elb
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -996,8 +1002,10 @@ Resources:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
     Condition: UseSSL
     Properties:
-      #AccessLoggingPolicy:
-      #  AccessLoggingPolicy
+      AccessLoggingPolicy:
+        Enabled: True
+        S3BucketName: !Ref GitLabBucket
+        S3BucketPrefix: logs/test-elb
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
