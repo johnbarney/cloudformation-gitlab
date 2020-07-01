@@ -4,38 +4,94 @@
 ---
 Description: GitLab on AWS
 
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Ingress Configuration"
+        Parameters:
+          - CertificateID
+          - HostZone
+      - Label:
+          default: "SSH Configuration"
+        Parameters:
+          - BastionKeyName
+          - BastionImage
+          - IPWhiteList
+      - Label:
+          default: "Database Configuration"
+        Parameters:
+          - DatabaseSize
+          - DatabaseStorage
+          - DatabaseIOPS
+          - DatabasePassword
+      - Label:
+          default: "Redis Configuration"
+        Parameters:
+          - CacheSize
+          - CacheReplicaCount
+      - Label:
+          default: "Application Configuration"
+        Parameters:
+          - ApplicationImage
+          - ApplicationSize
+          - GitLabKeyName
+    ParameterLabels:
+      CertificateID:
+        default: "ACM SSL Certificate ARN"
+      HostZone:
+        default: "Route53 HostZone"
+      IPWhiteList:
+        default: "IP range allowed to SSH into Bastion"
+      BastionKeyName:
+        default: "SSH Key to use for Bastion host"
+      GitLabKeyName:
+        default: "SSH Key to use for GitLab test host"
+      DatabaseSize:
+        default: "Database Instance Size"
+      DatabaseStorage:
+        default: "Size of Database in GB"
+      DatabaseIOPS:
+        default: "Database IOPS"
+      DatabasePassword:
+        default: "Database Password"
+      CacheSize:
+        default: "Cache Instance Size"
+      CacheReplicaCount:
+        default: "Cache Replica Count"
+
 Parameters:
   CertificateID:
     Type: String
     Default: ""
-    Description: SSL Certificate ARN
+    Description: Optional
 
   HostZone:
     Type: String
     Default: ""
-    Description: DNS Zone to create A records
+    Description: Optional
 
   BastionKeyName:
     Type: AWS::EC2::KeyPair::KeyName
-    Description: Enter keyname for Bastion instance access. (Required)
+    Description: Required
 
   IPWhiteList:
     Type: String
     Default: 0.0.0.0/0
     AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
-    Description: IP range allowed to VPN into Bastion. (Not recommended to leave default)
+    Description: Not recommended to leave default
 
   GitLabKeyName:
     Type: AWS::EC2::KeyPair::KeyName
-    Description: Enter keyname for GitLab instance access.
+    Description: Required
 
   ApplicationImage:
     Type: AWS::EC2::Image::Id
-    Description: Image to use for GitLab servers
+    Description: Required
 
   BastionImage:
     Type: AWS::EC2::Image::Id
-    Description: Image to use for Bastion host
+    Description: Required
 
   ApplicationSize:
     Type: String
@@ -46,7 +102,6 @@ Parameters:
       - m5.large
       - m5.xlarge
       - c5.large
-    Description: GitLab Application instance size.
 
   CacheSize:
     Type: String
@@ -56,7 +111,13 @@ Parameters:
       - cache.t3.medium
       - cache.m5.large
       - cache.r5.large
-    Description: Cache Node instance size.
+
+  CacheReplicaCount:
+    Type: String
+    Default: 2
+    AllowedValues:
+      - 2
+      - 3
 
   DatabaseSize:
     Type: String
@@ -67,24 +128,23 @@ Parameters:
       - db.m5.large
       - db.m5.xlarge
       - db.m5.2xlarge
-    Description: Database Instance Size
 
   DatabaseStorage:
     Type: Number
     Default: "100"
-    Description: Size of database in GB. Must be at least 100. Cannot exceed 6000.
+    Description: Must be at least 100. Cannot exceed 6000.
 
   DatabaseIOPS:
     Type: String
     Description: |
-      Database IOPS. Leave blank to use gp2 storage. Otherwise see: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html#USER_PIOPS
+      Leave blank to use gp2 storage. Otherwise see: https://docs.aws.amazon.com/AmazonRDS/latest/UserGuide/CHAP_Storage.html#USER_PIOPS
 
   DatabasePassword:
     Type: String
     NoEcho: true
     MinLength: "8"
     MaxLength: "41"
-    Description: Enter a database password. Do not include characters " \ or @.
+    Description: Do not include characters " \ or @.
 
 Conditions:
   UseDatabaseIOPS: !Not [!Equals [!Ref DatabaseIOPS, ""]]
@@ -592,7 +652,6 @@ Resources:
       ImageId: !Ref ApplicationImage
       InstanceMonitoring: true
       InstanceType: !Ref ApplicationSize
-      KeyName: !Ref GitLabKeyName
       SecurityGroups:
         - !Ref ApplicationSecurityGroup
         - !Ref PrivateInstanceSecurityGroup
@@ -1143,7 +1202,7 @@ Resources:
       CacheSubnetGroupName: !Ref SubnetGroup
       Engine: redis
       NodeGroupConfiguration:
-        - ReplicaCount: 2
+        - ReplicaCount: !Ref CacheReplicaCount
       NotificationTopicArn: !Ref SNSTopic
       ReplicationGroupDescription: GitLab Redis Cluster
       SecurityGroupIds:
