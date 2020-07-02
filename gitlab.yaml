@@ -19,11 +19,16 @@ Metadata:
           - BastionImage
           - IPWhiteList
       - Label:
+          default: "Runner Configuration"
+        Parameters:
+          - RunnerKeyName
+          - RunnerImage
+      - Label:
           default: "Application Configuration"
         Parameters:
           - ApplicationImage
           - ApplicationSize
-          - GitLabKeyName
+          - ApplicationKeyName
       - Label:
           default: "Database Configuration"
         Parameters:
@@ -36,20 +41,23 @@ Metadata:
         Parameters:
           - CacheSize
           - CacheReplicaCount
-
     ParameterLabels:
-      CertificateID:
-        default: "ACM SSL Certificate ARN"
-      HostZone:
-        default: "Route53 HostZone"
-      IPWhiteList:
-        default: "IP range allowed to SSH into Bastion"
+      ApplicationKeyName:
+        default: "SSH Key for GitLab Test Host"
+      ApplicationImage:
+        default: "Application Image (AMI)"
+      ApplicationSize:
+        default: "Application Instance Size"
       BastionKeyName:
         default: "SSH Key for Bastion host"
       BastionImage:
         default: "Bastion Image (AMI)"
-      GitLabKeyName:
-        default: "SSH Key for GitLab Test Host"
+      CacheSize:
+        default: "Cache Instance Size"
+      CacheReplicaCount:
+        default: "Cache Replica Count"
+      CertificateID:
+        default: "ACM SSL Certificate ARN"
       DatabaseSize:
         default: "Database Instance Size"
       DatabaseStorage:
@@ -58,45 +66,21 @@ Metadata:
         default: "Database IOPS"
       DatabasePassword:
         default: "Database Password"
-      CacheSize:
-        default: "Cache Instance Size"
-      CacheReplicaCount:
-        default: "Cache Replica Count"
-      ApplicationImage:
-        default: "Application Image (AMI)"
-      ApplicationSize:
-        default: "Application Instance Size"
+      HostZone:
+        default: "Route53 HostZone"
+      IPWhiteList:
+        default: "IP range allowed to SSH into Bastion"
+      RunnerKeyName:
+        default: "SSH Key for Runner host"
+      RunnerImage:
+        default: "Runner Image (AMI)"
 
 Parameters:
-  CertificateID:
-    Type: String
-    Default: ""
-    Description: Optional
-
-  HostZone:
-    Type: String
-    Default: ""
-    Description: Optional
-
-  BastionKeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Required
-
-  IPWhiteList:
-    Type: String
-    Default: 0.0.0.0/0
-    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
-    Description: Not recommended to leave default
-
-  GitLabKeyName:
+  ApplicationKeyName:
     Type: AWS::EC2::KeyPair::KeyName
     Description: Required
 
   ApplicationImage:
-    Type: AWS::EC2::Image::Id
-    Description: Required
-
-  BastionImage:
     Type: AWS::EC2::Image::Id
     Description: Required
 
@@ -110,6 +94,14 @@ Parameters:
       - m5.xlarge
       - c5.large
 
+  BastionKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Required
+
+  BastionImage:
+    Type: AWS::EC2::Image::Id
+    Description: Required
+
   CacheSize:
     Type: String
     Default: cache.t3.small
@@ -121,10 +113,15 @@ Parameters:
 
   CacheReplicaCount:
     Type: String
-    Default: 2
+    Default: "2"
     AllowedValues:
-      - 2
-      - 3
+      - "2"
+      - "3"
+
+  CertificateID:
+    Type: String
+    Default: ""
+    Description: Optional
 
   DatabaseSize:
     Type: String
@@ -137,7 +134,7 @@ Parameters:
       - db.m5.2xlarge
 
   DatabaseStorage:
-    Type: Number
+    Type: String
     Default: "100"
     Description: Must be at least 100. Cannot exceed 6000.
 
@@ -152,6 +149,25 @@ Parameters:
     MinLength: "8"
     MaxLength: "41"
     Description: Do not include characters " \ or @.
+
+  HostZone:
+    Type: String
+    Default: ""
+    Description: Optional
+
+  IPWhiteList:
+    Type: String
+    Default: 0.0.0.0/0
+    AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
+    Description: Not recommended to leave default
+
+  RunnerKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Required
+
+  RunnerImage:
+    Type: AWS::EC2::Image::Id
+    Description: Required
 
 Mappings:
   RegionMap:
@@ -671,23 +687,6 @@ Resources:
     Properties:
       Domain: vpc
 
-  #############
-  # Instances #
-  #############
-
-  BastionInstance:
-    Type: AWS::EC2::Instance
-    Properties:
-      ImageId: !Ref BastionImage
-      SecurityGroupIds:
-        - !Ref BastionSecurityGroup
-      SubnetId: !Ref PublicA
-      InstanceType: t3.small
-      KeyName: !Ref BastionKeyName
-      Tags:
-        - Key: Name
-          Value: GitLab Bastion
-
   #######
   # SNS #
   #######
@@ -700,6 +699,73 @@ Resources:
   ###################
   # EC2 Autoscaling #
   ###################
+
+  BastionAutoScaleGroup:
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: True
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: "1"
+      LaunchConfigurationName: !Ref BastionLaunchConfig
+      MaxSize: "1"
+      MinSize: "1"
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          TopicARN: !Ref SNSTopic
+      VPCZoneIdentifier:
+        - !Ref PublicA
+        - !Ref PublicB
+        - !Ref PublicC
+      Tags:
+        - Key: Name
+          Value: GitLab Bastion Instance
+          PropagateAtLaunch: true
+
+  BastionLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref BastionImage
+      InstanceType: t3.small
+      KeyName: !Ref BastionKeyName
+      SecurityGroups:
+        - !Ref BastionSecurityGroup
+
+  RunnerAutoScaleGroup:
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: True
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: "1"
+      LaunchConfigurationName: !Ref RunnerLaunchConfig
+      MaxSize: "1"
+      MinSize: "1"
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          TopicARN: !Ref SNSTopic
+      VPCZoneIdentifier:
+        - !Ref PrivateA
+        - !Ref PrivateB
+        - !Ref PrivateC
+      Tags:
+        - Key: Name
+          Value: GitLab Runner Instance
+          PropagateAtLaunch: true
+
+  RunnerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      ImageId: !Ref RunnerImage
+      InstanceType: t3.small
+      KeyName: !Ref RunnerKeyName
+      SecurityGroups:
+        - !Ref RunnerSecurityGroup
+        - !Ref PrivateInstanceSecurityGroup
 
   AutoScaleGroup:
     UpdatePolicy:
@@ -743,7 +809,7 @@ Resources:
   LaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      IamInstanceProfile: !Ref IAMProfile
+      IamInstanceProfile: !Ref ApplicationIAMProfile
       ImageId: !Ref ApplicationImage
       InstanceMonitoring: true
       InstanceType: !Ref ApplicationSize
@@ -779,17 +845,17 @@ Resources:
         - !Ref PrivateC
       Tags:
         - Key: Name
-          Value: Test GitLab Application Instance
+          Value: GitLab Test Application Instance
           PropagateAtLaunch: true
 
   TestLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      IamInstanceProfile: !Ref IAMProfile
+      IamInstanceProfile: !Ref ApplicationIAMProfile
       ImageId: !Ref ApplicationImage
       InstanceMonitoring: true
       InstanceType: !Ref ApplicationSize
-      KeyName: !Ref GitLabKeyName
+      KeyName: !Ref ApplicationKeyName
       SecurityGroups:
         - !Ref ApplicationSecurityGroup
         - !Ref PrivateInstanceSecurityGroup
@@ -853,6 +919,33 @@ Resources:
           Value: GitLab Application Security Group
       VpcId: !Ref VPC
 
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Runner Security Group
+      Tags:
+        - Key: Name
+          Value: GitLab Runner Security Group
+      VpcId: !Ref VPC
+
+  RunnerSSHEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref RunnerSecurityGroup
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId: !Ref RunnerSecurityGroup
+
+  RunnerSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId: !Ref RunnerSecurityGroup
+      SourceSecurityGroupId: !Ref RunnerSecurityGroup
+
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
@@ -905,34 +998,34 @@ Resources:
           Value: GitLab ElastiCache Security Group
       VpcId: !Ref VPC
 
-  ApplicationToElastiCache:
+  ApplicationRedisElastiCacheEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
       DestinationSecurityGroupId: !Ref CacheSecurityGroup
       FromPort: 6379
       ToPort: 6379
       IpProtocol: tcp
-      GroupId: !Ref PrivateInstanceSecurityGroup
+      GroupId: !Ref ApplicationSecurityGroup
 
-  ApplicationToRDS:
+  ApplicationPostgresRDSEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
       DestinationSecurityGroupId: !Ref DBSecurityGroup
       FromPort: 5432
       ToPort: 5432
       IpProtocol: tcp
-      GroupId: !Ref PrivateInstanceSecurityGroup
+      GroupId: !Ref ApplicationSecurityGroup
 
   BastionSSHApplicationEress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
-      DestinationSecurityGroupId: !Ref ApplicationSecurityGroup
+      DestinationSecurityGroupId: !Ref PrivateInstanceSecurityGroup
       FromPort: 22
       ToPort: 22
       IpProtocol: tcp
       GroupId: !Ref BastionSecurityGroup
 
-  SSLSMTPEgress:
+  ApplicationSSLSMTPEgress:
     Type: AWS::EC2::SecurityGroupEgress
     Properties:
       CidrIp: 0.0.0.0/0
@@ -963,13 +1056,13 @@ Resources:
   # IAM #
   #######
 
-  IAMProfile:
+  ApplicationIAMProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref IAMRole
+        - !Ref ApplicationIAMRole
 
-  IAMRole:
+  ApplicationIAMRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -981,12 +1074,12 @@ Resources:
             Action: sts:AssumeRole
       RoleName: GitLab-Role
 
-  IAMPolicy:
+  ApplicationIAMPolicy:
     Type: AWS::IAM::Policy
     Properties:
       PolicyName: GitLab
       Roles:
-        - !Ref IAMRole
+        - !Ref ApplicationIAMRole
       PolicyDocument:
         Version: 2012-10-17
         Statement:
@@ -1280,11 +1373,6 @@ Outputs:
   SNSTopic:
     Description: GitLab SNS Topic
     Value: !Ref SNSTopic
-
-  BastionIP:
-    Description: Public IP of the SSH Bastion
-    Value:
-      Fn::GetAtt: BastionInstance.PublicIp
 
   GitLabBucket:
     Description: Bucket for GitLab files
