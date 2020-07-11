@@ -1,0 +1,54 @@
+#############################
+# GitLab Runner Target Role #
+#############################
+---
+Description: GitLab Runner Target Role
+
+Parameters:
+  AssumeRoleArn:
+    Type: String
+    Default: arn:aws:iam::123456789012:root
+
+Resources:
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          Effect: Allow
+          Principal:
+            AWS: !Ref AssumeRoleArn
+          Action: sts:AssumeRole
+      Description: Permissions GitLab Runners assume
+
+  IamPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        # Statements should be customized by account to reflect the permissions the
+        # GitLab Runner requires to complete a deployment. This is an example policy.
+        Statement:
+          - Effect: Allow
+            Action: s3:ListAllMyBuckets
+            Resource: "*"
+          - Effect: Allow
+            Action:
+              - s3:ListBucket
+              - s3:GetBucketLocation
+            Resource: arn:aws:s3:::productionapp
+          - Effect: Allow
+            Action:
+              - s3:GetObject
+              - s3:PutObject
+              - s3:DeleteObject
+            Resource: arn:aws:s3:::productionapp/*
+      PolicyName: GitLabRunnerPolicy
+      Roles:
+        - !Ref IamRole
+
+Outputs:
+  IamRoleArn:
+    Description: IAM Role for GitLab Runner to assume
+    Value: !GetAtt IamRole.Arn

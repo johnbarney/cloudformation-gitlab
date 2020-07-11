@@ -19,11 +19,6 @@ Metadata:
           - BastionImage
           - IPWhiteList
       - Label:
-          default: "Runner Configuration"
-        Parameters:
-          - RunnerKeyName
-          - RunnerImage
-      - Label:
           default: "Application Configuration"
         Parameters:
           - ApplicationImage
@@ -70,10 +65,6 @@ Metadata:
         default: "Route53 HostZone"
       IPWhiteList:
         default: "IP range allowed to SSH into Bastion"
-      RunnerKeyName:
-        default: "SSH Key for Runner host"
-      RunnerImage:
-        default: "Runner Image (AMI)"
 
 Parameters:
   ApplicationKeyName:
@@ -160,14 +151,6 @@ Parameters:
     Default: 0.0.0.0/0
     AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
     Description: Not recommended to leave default
-
-  RunnerKeyName:
-    Type: AWS::EC2::KeyPair::KeyName
-    Description: Required
-
-  RunnerImage:
-    Type: AWS::EC2::Image::Id
-    Description: Required
 
 Mappings:
   RegionMap:
@@ -733,40 +716,6 @@ Resources:
       SecurityGroups:
         - !Ref BastionSecurityGroup
 
-  RunnerAutoScaleGroup:
-    UpdatePolicy:
-      AutoScalingReplacingUpdate:
-        WillReplace: True
-    Type: AWS::AutoScaling::AutoScalingGroup
-    Properties:
-      DesiredCapacity: "1"
-      LaunchConfigurationName: !Ref RunnerLaunchConfig
-      MaxSize: "1"
-      MinSize: "1"
-      NotificationConfigurations:
-        - NotificationTypes:
-            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
-            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
-          TopicARN: !Ref SNSTopic
-      VPCZoneIdentifier:
-        - !Ref PrivateA
-        - !Ref PrivateB
-        - !Ref PrivateC
-      Tags:
-        - Key: Name
-          Value: GitLab Runner Instance
-          PropagateAtLaunch: true
-
-  RunnerLaunchConfig:
-    Type: AWS::AutoScaling::LaunchConfiguration
-    Properties:
-      ImageId: !Ref RunnerImage
-      InstanceType: t3.small
-      KeyName: !Ref RunnerKeyName
-      SecurityGroups:
-        - !Ref RunnerSecurityGroup
-        - !Ref PrivateInstanceSecurityGroup
-
   AutoScaleGroup:
     UpdatePolicy:
       AutoScalingScheduledAction:
@@ -918,33 +867,6 @@ Resources:
         - Key: Name
           Value: GitLab Application Security Group
       VpcId: !Ref VPC
-
-  RunnerSecurityGroup:
-    Type: AWS::EC2::SecurityGroup
-    Properties:
-      GroupDescription: GitLab Runner Security Group
-      Tags:
-        - Key: Name
-          Value: GitLab Runner Security Group
-      VpcId: !Ref VPC
-
-  RunnerSSHEgress:
-    Type: AWS::EC2::SecurityGroupEgress
-    Properties:
-      DestinationSecurityGroupId: !Ref RunnerSecurityGroup
-      FromPort: 22
-      ToPort: 22
-      IpProtocol: tcp
-      GroupId: !Ref RunnerSecurityGroup
-
-  RunnerSSHIngress:
-    Type: AWS::EC2::SecurityGroupIngress
-    Properties:
-      FromPort: 22
-      ToPort: 22
-      IpProtocol: tcp
-      GroupId: !Ref RunnerSecurityGroup
-      SourceSecurityGroupId: !Ref RunnerSecurityGroup
 
   LoadBalancerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
@@ -1361,6 +1283,18 @@ Outputs:
     Condition: CreateDNS
     Description: Application URL
     Value: !Ref DNSEndpoint
+
+  Vpc:
+    Description: Vpc Id
+    Value: !Ref VPC
+
+  Subnets:
+    Description: Private Subnet Ids
+    Value: !Join [ ",", [ !Ref PrivateA, !Ref PrivateB, !Ref PrivateC ]]
+
+  PrivateInstanceSecurityGroup:
+    Description: Private Instance Security Group
+    Value: !Ref PrivateInstanceSecurityGroup
 
   CacheEndpoint:
     Description: Cache Endpoint Address

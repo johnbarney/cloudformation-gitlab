@@ -1,0 +1,160 @@
+#####################
+# GitLab Runner Pod #
+#####################
+---
+Description: GitLab Runner Pod
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Runner Configuration"
+        Parameters:
+          - RunnerKeyName
+          - RunnerImage
+          - TargetAccountRole
+      - Label:
+          default: "GitLab Stack Outputs"
+        Parameters:
+          - SNSTopic
+          - Subnets
+          - Vpc
+          - PrivateInstanceSecurityGroup
+    ParameterLabels:
+      RunnerKeyName:
+        default: "SSH Key for Runner host"
+      RunnerImage:
+        default: "Runner Image (AMI)"
+      TargetAccountRole:
+        default: "IAM Role ARN on target account Runner will assume"
+      SNSTopic:
+        default: "SNS Topic created by GitLab stack"
+      Subnets:
+        default: "GitLab Private Subnets"
+      Vpc:
+        default: "GitLab VPC"
+      PrivateInstanceSecurityGroup:
+        default: "GitLab Private Instance Security Group"
+
+Parameters:
+  TargetAccountRole:
+    Type: String
+    Description: Required
+
+  RunnerKeyName:
+    Type: AWS::EC2::KeyPair::KeyName
+    Description: Required
+
+  RunnerImage:
+    Type: AWS::EC2::Image::Id
+    Description: Required
+
+  SNSTopic:
+    Type: String
+    Description: Required
+
+  Subnets:
+    Type: List<AWS::EC2::Subnet::Id>
+    Description: Required
+
+  PrivateInstanceSecurityGroup:
+    Type: AWS::EC2::SecurityGroup::Id
+    Description: Required
+
+  Vpc:
+    Type: AWS::EC2::VPC::Id
+    Description: Required
+
+Resources:
+  IamProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref IamRole
+
+  IamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service: ec2.amazonaws.com
+          Action: sts:AssumeRole
+      Description: GitLab Runner Role
+      ManagedPolicyArns:
+        - arn:aws:iam::aws:policy/AmazonEC2FullAccess
+        - arn:aws:iam::aws:policy/AmazonS3FullAccess
+
+  IamPolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Action: sts:AssumeRole
+            Resource: !Ref TargetAccountRole
+      PolicyName: !Join [ "-", [ GitLab-Runner-Policy, AWS::StackName ] ] # Uniquify
+      Roles:
+        - !Ref IamRole
+
+  RunnerAutoScaleGroup:
+    UpdatePolicy:
+      AutoScalingReplacingUpdate:
+        WillReplace: True
+    Type: AWS::AutoScaling::AutoScalingGroup
+    Properties:
+      DesiredCapacity: "1"
+      LaunchConfigurationName: !Ref RunnerLaunchConfig
+      MaxSize: "1"
+      MinSize: "1"
+      NotificationConfigurations:
+        - NotificationTypes:
+            - autoscaling:EC2_INSTANCE_LAUNCH_ERROR
+            - autoscaling:EC2_INSTANCE_TERMINATE_ERROR
+          TopicARN: !Ref SNSTopic
+      VPCZoneIdentifier: !Ref Subnets
+      Tags:
+        - Key: Name
+          Value: GitLab Runner Instance
+          PropagateAtLaunch: true
+
+  RunnerLaunchConfig:
+    Type: AWS::AutoScaling::LaunchConfiguration
+    Properties:
+      IamInstanceProfile: !Ref IamProfile
+      ImageId: !Ref RunnerImage
+      InstanceType: t3.small
+      KeyName: !Ref RunnerKeyName
+      SecurityGroups:
+        - !Ref RunnerSecurityGroup
+        - !Ref PrivateInstanceSecurityGroup
+
+  RunnerSecurityGroup:
+    Type: AWS::EC2::SecurityGroup
+    Properties:
+      GroupDescription: GitLab Runner Security Group
+      Tags:
+        - Key: Name
+          Value: GitLab Runner Security Group
+      VpcId: !Ref Vpc
+
+  RunnerSSHEgress:
+    Type: AWS::EC2::SecurityGroupEgress
+    Properties:
+      DestinationSecurityGroupId: !Ref RunnerSecurityGroup
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId: !Ref RunnerSecurityGroup
+
+  RunnerSSHIngress:
+    Type: AWS::EC2::SecurityGroupIngress
+    Properties:
+      FromPort: 22
+      ToPort: 22
+      IpProtocol: tcp
+      GroupId: !Ref RunnerSecurityGroup
+      SourceSecurityGroupId: !Ref RunnerSecurityGroup
