@@ -4,10 +4,22 @@
 ---
 Description: GitLab Runner Target Role
 
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: "Role Configuration"
+        Parameters:
+          - AssumeRoleArn
+    ParameterLabels:
+      AssumeRoleArn:
+        default: "Role that can assume role created by this template"
+
 Parameters:
   AssumeRoleArn:
     Type: String
     Default: arn:aws:iam::123456789012:root
+    Description: Required
 
 Resources:
   IamRole:
