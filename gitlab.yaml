@@ -1,6 +1,8 @@
 #################
 # GitLab on AWS #
 #################
+# TODO: (Item) Add S3 VPC Endpoint with permissions to gitlab bucket and remove S3 full access from IAM profiles of Runner and GitLab
+# TODO: (Epic) Automate installation of GitLab on test instance and configure what can be from template
 ---
 Description: GitLab on AWS
 
@@ -24,6 +26,7 @@ Metadata:
           - ApplicationImage
           - ApplicationSize
           - ApplicationKeyName
+          - GitLabInstalled
       - Label:
           default: "Database Configuration"
         Parameters:
@@ -65,6 +68,8 @@ Metadata:
         default: "Route53 HostZone"
       IPWhiteList:
         default: "IP range allowed to SSH into Bastion"
+      GitLabInstalled:
+        default: "GitLab installed?"
 
 Parameters:
   ApplicationKeyName:
@@ -152,6 +157,14 @@ Parameters:
     AllowedPattern: ^(([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])\.){3}([0-9]|[1-9][0-9]|1[0-9]{2}|2[0-4][0-9]|25[0-5])(\/([0-9]|[1-2][0-9]|3[0-2]))$
     Description: Not recommended to leave default
 
+  GitLabInstalled:
+    Type: String
+    Default: false
+    AllowedValues:
+      - true
+      - false
+    Description: Has GitLab been successfully installed to the AMI being deployed?
+
 Mappings:
   RegionMap:
     us-east-1:
@@ -202,9 +215,9 @@ Conditions:
   CreateDNS: !Not [!Equals [!Ref HostZone, ""]]
   UseSSL: !Not [!Equals [!Ref CertificateID, ""]]
   NoSSL: !Equals [!Ref CertificateID, ""]
+  GitLabInstalled: !Equals [!Ref GitLabInstalled, "true"]
 
 Resources:
-
   ######
   # S3 #
   ######
@@ -730,10 +743,9 @@ Resources:
           - AlarmNotification
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      Cooldown: "300"
       DesiredCapacity: "2"
+      HealthCheckType: !If [GitLabInstalled, ELB, EC2] # Do not constantly replace unconfigured instances on first deploy
       HealthCheckGracePeriod: 300
-      HealthCheckType: ELB
       LaunchConfigurationName: !Ref LaunchConfig
       LoadBalancerNames:
         - !If [UseSSL, !Ref LoadBalancerSSL, !Ref LoadBalancer]
@@ -772,10 +784,8 @@ Resources:
         WillReplace: True
     Type: AWS::AutoScaling::AutoScalingGroup
     Properties:
-      Cooldown: "300"
       DesiredCapacity: "1"
-      HealthCheckGracePeriod: 300
-      HealthCheckType: ELB
+      HealthCheckType: EC2 # Prevents replacement while working on temp instance
       LaunchConfigurationName: !Ref TestLaunchConfig
       LoadBalancerNames:
         - !If [UseSSL, !Ref TestLoadBalancerSSL, !Ref TestLoadBalancer]

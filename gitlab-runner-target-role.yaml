@@ -39,23 +39,48 @@ Resources:
     Properties:
       PolicyDocument:
         Version: 2012-10-17
-        # Statements should be customized by account to reflect the permissions the
-        # GitLab Runner requires to complete a deployment. This is an example policy.
         Statement:
           - Effect: Allow
-            Action: s3:ListAllMyBuckets
+            Action:
+              - cloudformation:DetectStackSetDrift
+              - cloudformation:ListExports
+              - cloudformation:DescribeStackDriftDetectionStatus
+              - cloudformation:DetectStackDrift
+              - cloudformation:ListStackSetOperations
+              - cloudformation:ListStackInstances
+              - cloudformation:ListTypes
+              - cloudformation:DescribeStackResource
+              - cloudformation:CreateChangeSet
+              - cloudformation:ListTypeRegistrations
+              - cloudformation:ListStackSetOperationResults
+              - cloudformation:DetectStackResourceDrift
+              - cloudformation:EstimateTemplateCost
+              - cloudformation:DescribeStackEvents
+              - cloudformation:DescribeStackSetOperation
+              - cloudformation:UpdateStack
+              - cloudformation:DescribeAccountLimits
+              - cloudformation:DescribeChangeSet
+              - cloudformation:ExecuteChangeSet
+              - cloudformation:ListStackResources
+              - cloudformation:ListStacks
+              - cloudformation:DescribeType
+              - cloudformation:ListImports
+              - cloudformation:DescribeStackInstance
+              - cloudformation:DescribeStackResources
+              - cloudformation:DescribeTypeRegistration
+              - cloudformation:GetTemplateSummary
+              - cloudformation:DescribeStacks
+              - cloudformation:DescribeStackResourceDrifts
+              - cloudformation:GetStackPolicy
+              - cloudformation:DescribeStackSet
+              - cloudformation:ListStackSets
+              - cloudformation:GetTemplate
+              - cloudformation:TagResource
+              - cloudformation:UntagResource
+              - cloudformation:ValidateTemplate
+              - cloudformation:ListChangeSets
+              - cloudformation:ListTypeVersions
             Resource: "*"
-          - Effect: Allow
-            Action:
-              - s3:ListBucket
-              - s3:GetBucketLocation
-            Resource: arn:aws:s3:::productionapp
-          - Effect: Allow
-            Action:
-              - s3:GetObject
-              - s3:PutObject
-              - s3:DeleteObject
-            Resource: arn:aws:s3:::productionapp/*
       PolicyName: GitLabRunnerPolicy
       Roles:
         - !Ref IamRole

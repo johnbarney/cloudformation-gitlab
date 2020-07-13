@@ -66,13 +66,13 @@ Parameters:
     Description: Required
 
 Resources:
-  IamProfile:
+  RunnerIamProfile:
     Type: AWS::IAM::InstanceProfile
     Properties:
       Roles:
-        - !Ref IamRole
+        - !Ref RunnerIamRole
 
-  IamRole:
+  RunnerIamRole:
     Type: AWS::IAM::Role
     Properties:
       AssumeRolePolicyDocument:
@@ -87,7 +87,25 @@ Resources:
         - arn:aws:iam::aws:policy/AmazonEC2FullAccess
         - arn:aws:iam::aws:policy/AmazonS3FullAccess
 
-  IamPolicy:
+  PodIamProfile:
+    Type: AWS::IAM::InstanceProfile
+    Properties:
+      Roles:
+        - !Ref PodIamRole
+
+  PodIamRole:
+    Type: AWS::IAM::Role
+    Properties:
+      AssumeRolePolicyDocument:
+        Version: 2012-10-17
+        Statement:
+          - Effect: Allow
+            Principal:
+              Service: ec2.amazonaws.com
+            Action: sts:AssumeRole
+      Description: GitLab Runner Role
+
+  PodIamPolicy:
     Type: AWS::IAM::Policy
     Properties:
       PolicyDocument:
@@ -96,9 +114,9 @@ Resources:
           - Effect: Allow
             Action: sts:AssumeRole
             Resource: !Ref TargetAccountRole
-      PolicyName: !Join [ "-", [ GitLab-Runner-Policy, AWS::StackName ] ] # Uniquify
+      PolicyName: !Ref "AWS::StackName"
       Roles:
-        - !Ref IamRole
+        - !Ref PodIamRole
 
   RunnerAutoScaleGroup:
     UpdatePolicy:
@@ -118,15 +136,15 @@ Resources:
       VPCZoneIdentifier: !Ref Subnets
       Tags:
         - Key: Name
-          Value: GitLab Runner Instance
+          Value: !Ref "AWS::StackName"
           PropagateAtLaunch: true
 
   RunnerLaunchConfig:
     Type: AWS::AutoScaling::LaunchConfiguration
     Properties:
-      IamInstanceProfile: !Ref IamProfile
+      IamInstanceProfile: !Ref RunnerIamProfile
       ImageId: !Ref RunnerImage
-      InstanceType: t3.small
+      InstanceType: t3.micro
       KeyName: !Ref RunnerKeyName
       SecurityGroups:
         - !Ref RunnerSecurityGroup
@@ -135,7 +153,7 @@ Resources:
   RunnerSecurityGroup:
     Type: AWS::EC2::SecurityGroup
     Properties:
-      GroupDescription: GitLab Runner Security Group
+      GroupDescription: !Ref "AWS::StackName"
       Tags:
         - Key: Name
           Value: GitLab Runner Security Group
@@ -158,3 +176,8 @@ Resources:
       IpProtocol: tcp
       GroupId: !Ref RunnerSecurityGroup
       SourceSecurityGroupId: !Ref RunnerSecurityGroup
+
+Outputs:
+  PodIamRole:
+    Description: IAM Role to apply to Runner Autoscale Pod
+    Value: !Ref PodIamRole
