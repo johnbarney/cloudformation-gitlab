@@ -1,7 +1,6 @@
 #################
 # GitLab on AWS #
 #################
-# TODO: (Item) Add S3 VPC Endpoint with permissions to gitlab bucket and remove S3 full access from IAM profiles of Runner and GitLab
 # TODO: (Epic) Automate installation of GitLab on test instance and configure what can be from template
 ---
 Description: GitLab on AWS
@@ -222,13 +221,28 @@ Resources:
   # S3 #
   ######
 
-  GitLabBucket:
+  ArtifactsBucket:
     Type: AWS::S3::Bucket
 
-  GitLabBucketPolicy:
+  ExternalDiffsBucket:
+    Type: AWS::S3::Bucket
+
+  LfsBucket:
+    Type: AWS::S3::Bucket
+
+  UploadsBucket:
+    Type: AWS::S3::Bucket
+
+  PackagesBucket:
+    Type: AWS::S3::Bucket
+
+  LogBucket:
+    Type: AWS::S3::Bucket
+
+  LogBucketPolicy:
     Type: AWS::S3::BucketPolicy
     Properties:
-      Bucket: !Ref GitLabBucket
+      Bucket: !Ref LogBucket
       PolicyDocument: !Sub
         - |
           {
@@ -240,7 +254,7 @@ Resources:
                           "AWS": "arn:aws:iam::${ELBAccount}:root"
                       },
                       "Action": "s3:PutObject",
-                      "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*"
+                      "Resource": "arn:aws:s3:::${LogBucket}/AWSLogs/${AWS::AccountId}/*"
                   },
                   {
                       "Effect": "Allow",
@@ -248,7 +262,7 @@ Resources:
                           "Service": "delivery.logs.amazonaws.com"
                       },
                       "Action": "s3:PutObject",
-                      "Resource": "arn:aws:s3:::${GitLabBucket}/AWSLogs/${AWS::AccountId}/*",
+                      "Resource": "arn:aws:s3:::${LogBucket}/AWSLogs/${AWS::AccountId}/*",
                       "Condition": {
                           "StringEquals": {
                               "s3:x-amz-acl": "bucket-owner-full-control"
@@ -261,7 +275,7 @@ Resources:
                           "Service": "delivery.logs.amazonaws.com"
                       },
                       "Action": "s3:GetBucketAcl",
-                      "Resource": "${GitLabBucket.Arn}"
+                      "Resource": "${LogBucket.Arn}"
                   }
               ]
           }
@@ -281,6 +295,20 @@ Resources:
       Tags:
         - Key: Name
           Value: GitLab VPC
+
+  #################
+  # VPC Endpoints #
+  #################
+
+  S3Endpoint:
+    Type: AWS::EC2::VPCEndpoint
+    Properties:
+      RouteTableIds:
+        - !Ref PrivateRouteTableA
+        - !Ref PrivateRouteTableB
+        - !Ref PrivateRouteTableC
+      ServiceName: !Join ["", ["com.amazonaws.", !Ref "AWS::Region", ".s3"]]
+      VpcId: !Ref VPC
 
   ###########
   # Subnets #
@@ -346,7 +374,7 @@ Resources:
       CidrBlock: 10.33.22.0/24
       Tags:
         - Key: Name
-          Value: GitLab Priate Subnet C
+          Value: GitLab Private Subnet C
       VpcId: !Ref VPC
 
   DatabaseA:
@@ -1004,7 +1032,7 @@ Resources:
             Principal:
               Service: ec2.amazonaws.com
             Action: sts:AssumeRole
-      RoleName: GitLab-Role
+      RoleName: GitLabRole
 
   ApplicationIAMPolicy:
     Type: AWS::IAM::Policy
@@ -1017,15 +1045,23 @@ Resources:
         Statement:
           - Effect: Allow
             Action:
-              - s3:AbortMultipartUpload
-              - s3:CompleteMultipartUpload
-              - s3:ListBucket
-              - s3:PutObject
-              - s3:GetObject
-              - s3:DeleteObject
-              - s3:PutObjectAcl
+              - s3:GetBucketLocation
+              - s3:ListAllMyBuckets
+            Resource: "arn:aws:s3:::*"
+          - Effect: Allow
+            Action:
+              - s3:*
             Resource:
-              - !GetAtt GitLabBucket.Arn
+              - !GetAtt ArtifactsBucket.Arn
+              - !Join ["", [!GetAtt ArtifactsBucket.Arn, "/*"]]
+              - !GetAtt ExternalDiffsBucket.Arn
+              - !Join ["", [!GetAtt ExternalDiffsBucket.Arn, "/*"]]
+              - !GetAtt LfsBucket.Arn
+              - !Join ["", [!GetAtt LfsBucket.Arn, "/*"]]
+              - !GetAtt UploadsBucket.Arn
+              - !Join ["", [!GetAtt UploadsBucket.Arn, "/*"]]
+              - !GetAtt PackagesBucket.Arn
+              - !Join ["", [!GetAtt PackagesBucket.Arn, "/*"]]
 
   ##################
   # Load Balancers #
@@ -1033,12 +1069,12 @@ Resources:
 
   LoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
-    DependsOn: GitLabBucketPolicy
+    DependsOn: LogBucketPolicy
     Condition: NoSSL
     Properties:
       AccessLoggingPolicy:
         Enabled: True
-        S3BucketName: !Ref GitLabBucket
+        S3BucketName: !Ref LogBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1065,12 +1101,12 @@ Resources:
 
   TestLoadBalancer:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
-    DependsOn: GitLabBucketPolicy
+    DependsOn: LogBucketPolicy
     Condition: NoSSL
     Properties:
       AccessLoggingPolicy:
         Enabled: True
-        S3BucketName: !Ref GitLabBucket
+        S3BucketName: !Ref LogBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1097,12 +1133,12 @@ Resources:
 
   LoadBalancerSSL:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
-    DependsOn: GitLabBucketPolicy
+    DependsOn: LogBucketPolicy
     Condition: UseSSL
     Properties:
       AccessLoggingPolicy:
         Enabled: True
-        S3BucketName: !Ref GitLabBucket
+        S3BucketName: !Ref LogBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1134,12 +1170,12 @@ Resources:
 
   TestLoadBalancerSSL:
     Type: AWS::ElasticLoadBalancing::LoadBalancer
-    DependsOn: GitLabBucketPolicy
+    DependsOn: LogBucketPolicy
     Condition: UseSSL
     Properties:
       AccessLoggingPolicy:
         Enabled: True
-        S3BucketName: !Ref GitLabBucket
+        S3BucketName: !Ref LogBucket
       ConnectionDrainingPolicy:
         Enabled: true
         Timeout: 300
@@ -1317,7 +1353,3 @@ Outputs:
   SNSTopic:
     Description: GitLab SNS Topic
     Value: !Ref SNSTopic
-
-  GitLabBucket:
-    Description: Bucket for GitLab files
-    Value: !Ref GitLabBucket
